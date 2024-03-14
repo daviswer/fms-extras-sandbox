@@ -40,7 +40,8 @@ def scan(state, g):
 class GatedScan(torch.autograd.Function):
     @staticmethod
     def forward(state, gate):
-        return scan(state.mul(1 - gate), gate)
+        z = state.repeat(1,1,gate.size(2)//state.size(2))
+        return scan(z.mul(1 - gate), gate)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -50,6 +51,8 @@ class GatedScan(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad):
         state, gate, output = ctx.saved_tensors
+        s2 = state.size(2)
+        state = state.repeat(1,1,gate.size(2)//s2)
 
         # Gate-accumulate grads
         gflip = gate.flip([1])
@@ -57,6 +60,7 @@ class GatedScan(torch.autograd.Function):
 
         # State grad
         state_grad = gatesum.mul(1 - gate)
+        state_grad = state_grad.view(state_grad.size(0), state_grad.size(1), s2, -1).sum(2)
 
         # Gate grad
         outshift = output.roll(1, dims=1)
@@ -133,7 +137,7 @@ class SandboxUnit(nn.Module):
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
             hidden_grow_factor = hidden_dim / emb_dim
         self.hidden_dim = hidden_dim
-        self.w_in = nn.Linear(emb_dim, hidden_dim * 3, bias=use_bias)
+        self.w_in = nn.Linear(emb_dim, hidden_dim * 2 + 256, bias=use_bias)
         self.bias = nn.Parameter(torch.rand(hidden_dim))
         # self.mulbias = nn.Parameter(torch.zeros(hidden_dim))
         # self.conv = nn.Parameter(torch.zeros(emb_dim))
@@ -183,7 +187,7 @@ class SandboxUnit(nn.Module):
         x = self.ln(x)
 
         # Project
-        q, g, v = self.w_in(x).split(self.hidden_dim, dim=-1)
+        q, g, v = self.w_in(x).split([self.hidden_dim, self.hidden_dim, 256], dim=-1)
         q = self.a(q)
         # v = self.a(v)
 
