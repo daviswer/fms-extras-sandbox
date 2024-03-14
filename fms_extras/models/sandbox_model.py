@@ -60,7 +60,7 @@ class GatedScan(torch.autograd.Function):
 
         # State grad
         state_grad = gatesum.mul(1 - gate)
-        state_grad = state_grad.view(state_grad.size(0), state_grad.size(1), s2, -1).sum(2)
+        state_grad = state_grad.view(state_grad.size(0), state_grad.size(1), -1, s2).sum(2)
 
         # Gate grad
         outshift = output.roll(1, dims=1)
