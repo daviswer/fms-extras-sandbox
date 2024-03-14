@@ -135,8 +135,8 @@ class SandboxUnit(nn.Module):
         self.hidden_dim = hidden_dim
         self.w_in = nn.Linear(emb_dim, hidden_dim * 3, bias=use_bias)
         self.bias = nn.Parameter(torch.rand(hidden_dim))
-        self.mulbias = nn.Parameter(torch.zeros(hidden_dim))
-        self.conv = nn.Parameter(torch.zeros(emb_dim))
+        # self.mulbias = nn.Parameter(torch.zeros(hidden_dim))
+        # self.conv = nn.Parameter(torch.zeros(emb_dim))
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -147,7 +147,7 @@ class SandboxUnit(nn.Module):
         self.hidden_grow_factor = hidden_grow_factor
         self.scan = GatedScan.apply
         self.ln = CenteredLayerNormParameterized(emb_dim, eps=ln_eps, use_high_precision_pow=True)
-        self.layer_bias = 0
+        # self.layer_bias = 0
 
     def reset_parameters(self, gain=1.0):
         # Gain for init scale factor x is given by:
@@ -157,7 +157,7 @@ class SandboxUnit(nn.Module):
         # Set to gain, solve for x
         # x**3 (sqrt.5 * sqrtg * d**1.5) = target gain
         # x = (gain * sqrt2 / d**1.5 / sqrtg)**(1/3)
-        for layer in [self.w_in.weight, self.w_out.weight, self.conv, self.mulbias]:
+        for layer in [self.w_in.weight, self.w_out.weight]:  # , self.conv, self.mulbias]:
             nn.init.normal_(
                 layer,
                 mean=0.0,
@@ -175,9 +175,9 @@ class SandboxUnit(nn.Module):
         residual = x
 
         # Conv, RWKV-style
-        c = self.conv
-        c = c.add(self.layer_bias).sigmoid()
-        x = x * c + (1 - c) * F.pad(x, (0,0,1,0))[:,:-1]
+        # c = self.conv
+        # c = c.add(self.layer_bias).sigmoid()
+        # x = x * c + (1 - c) * F.pad(x, (0,0,1,0))[:,:-1]
 
         # Layernorm
         x = self.ln(x)
@@ -194,7 +194,7 @@ class SandboxUnit(nn.Module):
         g = g.add(b).sigmoid()
         
         # Scan
-        z = self.scan(v, g).add(self.mulbias)
+        z = self.scan(v, g)#.add(self.mulbias)
 
         # Out project / add
         return residual + self.w_out(z * q)
@@ -273,7 +273,7 @@ class SandboxModel(nn.Module):
         self.dec_norm.reset_parameters()
         for layer_ind, layer in enumerate(self.layers):
             layer.reset_parameters(gain=1/len(self.layers)**.5)
-            layer.layer_bias = layer_ind * 3 / len(self.layers)
+            # layer.layer_bias = layer_ind * 3 / len(self.layers)
 
     def _helper(
         self,
