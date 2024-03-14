@@ -271,7 +271,7 @@ class SandboxModel(nn.Module):
         nn.init.normal_(self.shared.emb.weight, std=1/self.width**.5)
         nn.init.normal_(self.shared.head.weight, std=1/self.width**.5)
         self.dec_norm.reset_parameters()
-        for layer_ind, layer in self.layers:
+        for layer_ind, layer in enumerate(self.layers):
             layer.reset_parameters(gain=1/len(self.layers)**.5)
             layer.layer_bias = layer_ind * 3 / len(self.layers)
 
