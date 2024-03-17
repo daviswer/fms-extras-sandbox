@@ -9,6 +9,21 @@ from fms.modules.embedding import WordEmbedding
 from fms.utils.activation import str_to_activation
 
 
+def pscan(X, A):
+    # Courtesy of https://github.com/pytorch/pytorch/issues/95408#issuecomment-1871722410
+    Xa = F.pad(torch.transpose(X, 1, 2), (1,0))
+    X_real = torch.abs(Xa).log()
+    X_complex = (Xa < 0).to(A.dtype)
+    A_real = torch.abs(A).log()
+    X_ = torch.complex(X_real, X_complex * torch.pi)
+    A_complex = (A < 0).to(A.dtype)
+    A_ = torch.complex(A_real, A_complex * torch.pi)
+    a_star =  F.pad(torch.cumsum(A_, dim=1).transpose(1,2), (1,0))
+    log_x0_plus_b_star = torch.logcumsumexp(X_ - a_star, dim=-1)
+    log_x =  a_star + log_x0_plus_b_star
+    return torch.transpose(torch.exp(log_x).real[:,:,1:], 1, 2)
+
+
 def scan(state, g):
     # b n d
     state = torch.stack([state, g], dim=1) # b 2 n d
@@ -40,7 +55,7 @@ def scan(state, g):
 class GatedScan(torch.autograd.Function):
     @staticmethod
     def forward(state, gate):
-        return scan(state.mul(1 - gate), gate)
+        return pscan(state.mul(1 - gate), gate)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -53,7 +68,7 @@ class GatedScan(torch.autograd.Function):
 
         # Gate-accumulate grads
         gflip = gate.flip([1])
-        gatesum = scan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])
+        gatesum = pscan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])
 
         # State grad
         state_grad = gatesum.mul(1 - gate)
