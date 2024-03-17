@@ -11,6 +11,9 @@ from fms.utils.activation import str_to_activation
 
 def pscan(X, A):
     # Courtesy of https://github.com/pytorch/pytorch/issues/95408#issuecomment-1871722410
+    dt = X.dtype
+    X = X.half()
+    A = A.half()
     Xa = F.pad(torch.transpose(X, 1, 2), (1,0))
     X_real = torch.abs(Xa).log()
     X_complex = (Xa < 0).to(A.dtype)
@@ -21,7 +24,7 @@ def pscan(X, A):
     a_star =  F.pad(torch.cumsum(A_, dim=1).transpose(1,2), (1,0))
     log_x0_plus_b_star = torch.logcumsumexp(X_ - a_star, dim=-1)
     log_x =  a_star + log_x0_plus_b_star
-    return torch.transpose(torch.exp(log_x).real[:,:,1:], 1, 2)
+    return torch.transpose(torch.exp(log_x).real[:,:,1:], 1, 2).to(dtype=dt)
 
 
 def scan(state, g):
