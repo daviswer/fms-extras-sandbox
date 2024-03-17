@@ -60,7 +60,7 @@ def scan(state, g):
 class GatedScan(torch.autograd.Function):
     @staticmethod
     def forward(state, gate):
-        return pscan(state.mul(1 - gate), gate)
+        return scan(state.mul(1 - gate), gate)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -73,7 +73,7 @@ class GatedScan(torch.autograd.Function):
 
         # Gate-accumulate grads
         gflip = gate.flip([1])
-        gatesum = pscan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])
+        gatesum = scan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])
 
         # State grad
         state_grad = gatesum.mul(1 - gate)
