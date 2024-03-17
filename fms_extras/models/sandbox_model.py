@@ -315,7 +315,9 @@ class SandboxUnit(nn.Module):
                            ).reshape(*s[:2], self.hidden_dim)
 
         # Out project / add
-        return residual + self.w_out(z * qkv)
+        if self.layer_id == 0:
+            return residual + self.w_out(z * qkv)
+        return residual * (1 - 1/self.layer_id)**.5 + (1/self.layer_id)**.5 * self.w_out(z * qkv)
 
 
 class SandboxModel(nn.Module):
@@ -391,8 +393,8 @@ class SandboxModel(nn.Module):
         nn.init.normal_(self.shared.head.weight, std=1/self.width**.5)
         self.dec_norm.reset_parameters()
         for layer_ind, layer in enumerate(self.layers):
-            layer.reset_parameters(gain=1/len(self.layers)**.5)
-            # layer.layer_bias = layer_ind * 3 / len(self.layers)
+            layer.reset_parameters(gain=1) #/len(self.layers)**.5)
+            layer.layer_id = layer_ind+2
 
     def _helper(
         self,
