@@ -266,17 +266,17 @@ class SandboxUnit(nn.Module):
 
     def reset_parameters(self, gain=1.0):
         # Gain for init scale factor x is given by:
-        # (z / sqrt2) * v * k * q * wout
+        # (z / sqrt2) * v * k / sqrt2 * q * wout
         # Plugging in:
-        # x sqrtd / sqrt2 * x sqrtd * x sqrtd * x sqrtd sqrte * x sqrtd sqrtg
+        # x sqrtd / sqrt2 * x sqrtd * x sqrtd / sqrt2 * x sqrtd sqrte * x sqrtd sqrtg
         # Set to gain, solve for x
-        # x**5 (sqrt.5 * sqrtg * sqrte * d**2.5) = target gain
-        # x = (gain * sqrt2 / d**2.5 / sqrtge)**(1/5)
+        # x**5 (.5 * sqrtg * sqrte * d**2.5) = target gain
+        # x = (gain * 2 / d**2.5 / sqrtge)**(1/5)
         for layer in [self.w_in.weight, self.w_out.weight]:
             nn.init.normal_(
                 layer,
                 mean=0.0,
-                std = (gain * 2**.5 / (self.hidden_grow_factor*self.headdim)**.5 / self.width**2.5)**(1/5)
+                std = (gain * 2 / (self.hidden_grow_factor*self.headdim)**.5 / self.width**2.5)**(1/5)
             )
         self.bias.data.random_()
         if self.use_bias:
