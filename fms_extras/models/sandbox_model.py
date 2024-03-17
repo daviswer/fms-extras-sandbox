@@ -263,21 +263,21 @@ class SandboxUnit(nn.Module):
         self.hidden_grow_factor = hidden_grow_factor
         self.scan = GatedScan.apply
         self.ln = CenteredLayerNormParameterized(emb_dim, eps=ln_eps, use_high_precision_pow=True)
-        # self.layer_bias = 0
+        self.layer_id = 0
 
     def reset_parameters(self, gain=1.0):
         # Gain for init scale factor x is given by:
-        # (z / sqrt2) * v * k / sqrt2 * q * wout
+        # (z / sqrt2) * v * k * q * wout
         # Plugging in:
-        # x sqrtd / sqrt2 * x sqrtd * x sqrtd / sqrt2 * x sqrtd sqrte * x sqrtd sqrtg
+        # x sqrtd / sqrt2 * x sqrtd * x sqrtd * x sqrtd sqrte * x sqrtd sqrtg
         # Set to gain, solve for x
-        # x**5 (.5 * sqrtg * sqrte * d**2.5) = target gain
-        # x = (gain * 2 / d**2.5 / sqrtge)**(1/5)
+        # x**5 (sqrt.5 * sqrtg * sqrte * d**2.5) = target gain
+        # x = (gain * sqrt2 / d**2.5 / sqrtge)**(1/5)
         for layer in [self.w_in.weight, self.w_out.weight]:
             nn.init.normal_(
                 layer,
                 mean=0.0,
-                std = (gain * 2 / (self.hidden_grow_factor*self.headdim)**.5 / self.width**2.5)**(1/5)
+                std = (gain * 2**.5 / (self.hidden_grow_factor*self.headdim)**.5 / self.width**2.5)**(1/5)
             )
         self.bias.data.random_()
         if self.use_bias:
@@ -308,7 +308,7 @@ class SandboxUnit(nn.Module):
         kv = v.unsqueeze(-1) * k.unsqueeze(-2) # b n d/h e
         
         # Scan
-        kv = self.scan(kv.view(*s[:2],-1).relu(), g.view(*s[:2],-1)) # b n d/h*e
+        kv = self.scan(kv.view(*s[:2],-1), g.view(*s[:2],-1)) # b n d/h*e
         qkv = torch.einsum("bnde,bnhe->bnhd", 
                            kv.view(*s), 
                            q.view(*s[:2], self.nheads, self.headdim)
