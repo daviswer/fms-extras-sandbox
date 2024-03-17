@@ -11,20 +11,21 @@ from fms.utils.activation import str_to_activation
 
 def pscan(X, A):
     # Courtesy of https://github.com/pytorch/pytorch/issues/95408#issuecomment-1871722410
-    dt = X.dtype
-    X = X.half()
-    A = A.half()
     Xa = F.pad(torch.transpose(X, 1, 2), (1,0))
-    X_real = torch.abs(Xa).log()
-    X_complex = (Xa < 0).to(A.dtype)
-    A_real = torch.abs(A).log()
-    X_ = torch.complex(X_real, X_complex * torch.pi)
-    A_complex = (A < 0).to(A.dtype)
-    A_ = torch.complex(A_real, A_complex * torch.pi)
+    
+    X_ = Xa.add(1e-12).log()
+    A_ = A.log()
+#     X_real = torch.abs(Xa).log()
+#     X_complex = (Xa < 0).to(A.dtype)
+#     A_real = torch.abs(A).log()
+#     X_ = torch.complex(X_real, X_complex * torch.pi)
+#     A_complex = (A < 0).to(A.dtype)
+#     A_ = torch.complex(A_real, A_complex * torch.pi)
+
     a_star =  F.pad(torch.cumsum(A_, dim=1).transpose(1,2), (1,0))
     log_x0_plus_b_star = torch.logcumsumexp(X_ - a_star, dim=-1)
     log_x =  a_star + log_x0_plus_b_star
-    return torch.transpose(torch.exp(log_x).real[:,:,1:], 1, 2).to(dtype=dt)
+    return torch.transpose(torch.exp(log_x)[:,:,1:], 1, 2)
 
 
 def scan(state, g):
@@ -306,7 +307,7 @@ class SandboxUnit(nn.Module):
         kv = v.unsqueeze(-1) * k.unsqueeze(-2) # b n d/h e
         
         # Scan
-        kv = self.scan(kv.view(*s[:2],-1), g.view(*s[:2],-1)) # b n d/h*e
+        kv = self.scan(kv.view(*s[:2],-1).relu(), g.view(*s[:2],-1)) # b n d/h*e
         qkv = torch.einsum("bnde,bnhe->bnhd", 
                            kv.view(*s), 
                            q.view(*s[:2], self.nheads, self.headdim)
