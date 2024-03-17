@@ -384,12 +384,12 @@ class SandboxModel(nn.Module):
         return cls(config)
 
     def reset_parameters(self):
-        nn.init.normal_(self.shared.emb.weight, std=1/self.width)
-        self.shared.head.weight.data.zero_()
-        # nn.init.normal_(self.shared.head.weight, std=1/self.width**.5)
+        nn.init.normal_(self.shared.emb.weight, std=1/self.width**.5)
+        # self.shared.head.weight.data.zero_()
+        nn.init.normal_(self.shared.head.weight, std=1/self.width**.5)
         self.dec_norm.reset_parameters()
         for layer_ind, layer in enumerate(self.layers):
-            layer.reset_parameters(gain=1/len(self.layers))
+            layer.reset_parameters(gain=1/len(self.layers)**.5)
             # layer.layer_bias = layer_ind * 3 / len(self.layers)
 
     def _helper(
@@ -427,7 +427,7 @@ class SandboxModel(nn.Module):
         # else:
         #     is_causal_mask = False
 
-        x_in = self.shared(x_in).mul(self.width)
+        x_in = self.shared(x_in).mul(self.width**.5)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
