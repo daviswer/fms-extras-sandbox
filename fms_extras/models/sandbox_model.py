@@ -11,10 +11,11 @@ from fms.utils.activation import str_to_activation
 
 def pscan(X, A):
     # Courtesy of https://github.com/pytorch/pytorch/issues/95408#issuecomment-1871722410
+    # Unfortunately, it's slower, and might produce NaNs
     Xa = F.pad(torch.transpose(X, 1, 2), (1,0))
     
     X_ = Xa.add(1e-12).log()
-    A_ = A.log()
+    A_ = A.add(1e-12).log()
 #     X_real = torch.abs(Xa).log()
 #     X_complex = (Xa < 0).to(A.dtype)
 #     A_real = torch.abs(A).log()
