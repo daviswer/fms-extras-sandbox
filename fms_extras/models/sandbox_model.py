@@ -115,10 +115,97 @@ class CenteredLayerNormParameterized(nn.Module):
         return x
 
 
+# class SandboxUnit(nn.Module):
+#     def __init__(
+#         self,
+#         emb_dim,
+#         hidden_grow_factor=1.5,
+#         multiple_of=None,
+#         activation_fn=nn.ReLU(),
+#         p_dropout=0.1,
+#         use_bias=False,
+#         ln_eps=1e-6,
+#     ):
+#         super(SandboxUnit, self).__init__()
+#         self.multiple_of = multiple_of
+#         hidden_dim = int(hidden_grow_factor * emb_dim)
+#         if multiple_of:
+#             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+#             hidden_grow_factor = hidden_dim / emb_dim
+#         self.hidden_dim = hidden_dim
+#         self.w_in = nn.Linear(emb_dim, hidden_dim * 3, bias=use_bias)
+#         self.bias = nn.Parameter(torch.rand(hidden_dim))
+#         # self.mulbias = nn.Parameter(torch.zeros(hidden_dim))
+#         # self.conv = nn.Parameter(torch.zeros(emb_dim))
+#         self.a = activation_fn
+#         self.p_dropout = p_dropout
+#         if p_dropout:
+#             self.d = nn.Dropout(p_dropout)
+#         self.w_out = nn.Linear(hidden_dim, emb_dim, bias=use_bias)
+#         self.use_bias = use_bias
+#         self.width = emb_dim
+#         self.hidden_grow_factor = hidden_grow_factor
+#         self.scan = GatedScan.apply
+#         self.ln = CenteredLayerNormParameterized(emb_dim, eps=ln_eps, use_high_precision_pow=True)
+#         # self.layer_bias = 0
+
+#     def reset_parameters(self, gain=1.0):
+#         # Gain for init scale factor x is given by:
+#         # (q / sqrt2) * v * wout
+#         # Plugging in:
+#         # x sqrtd / sqrt2 * x sqrtd * x sqrtd sqrtg
+#         # Set to gain, solve for x
+#         # x**3 (sqrt.5 * sqrtg * d**1.5) = target gain
+#         # x = (gain * sqrt2 / d**1.5 / sqrtg)**(1/3)
+#         for layer in [self.w_in.weight, self.w_out.weight]:  # , self.conv, self.mulbias]:
+#             nn.init.normal_(
+#                 layer,
+#                 mean=0.0,
+#                 std = (gain * 2**.5 / self.hidden_grow_factor**.5 / self.width**1.5)**(1/3)
+#             )
+#         self.bias.data.random_()
+#         if self.use_bias:
+#             self.w_in.bias.data.zero_()
+#             self.w_out.bias.data.zero_()
+#         self.ln.reset_parameters()
+
+#     def forward(self, x):
+#         # x: b n d
+#         # TODO: add dropout somewhere
+#         residual = x
+
+#         # Conv, RWKV-style
+#         # c = self.conv
+#         # c = c.add(self.layer_bias).sigmoid()
+#         # x = x * c + (1 - c) * F.pad(x, (0,0,1,0))[:,:-1]
+
+#         # Layernorm
+#         x = self.ln(x)
+
+#         # Project
+#         q, g, v = self.w_in(x).split(self.hidden_dim, dim=-1)
+#         q = self.a(q)
+#         # v = self.a(v)
+
+#         # Gate handling
+#         b = self.bias
+#         b = b.sub(b.min())
+#         b = b.mul(6 / b.max())
+#         g = g.add(b).sigmoid()
+        
+#         # Scan
+#         z = self.scan(v, g)#.add(self.mulbias)
+
+#         # Out project / add
+#         return residual + self.w_out(z * q)
+    
+
 class SandboxUnit(nn.Module):
     def __init__(
         self,
         emb_dim,
+        nheads=8,
+        head_dim=8,
         hidden_grow_factor=1.5,
         multiple_of=None,
         activation_fn=nn.ReLU(),
@@ -127,16 +214,25 @@ class SandboxUnit(nn.Module):
         ln_eps=1e-6,
     ):
         super(SandboxUnit, self).__init__()
+
+        # v: d/h
+        # k: e
+        # q: h*e
+        # g: d/h
+        # z: d
+
         self.multiple_of = multiple_of
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
             hidden_grow_factor = hidden_dim / emb_dim
+        assert hidden_dim % nheads == 0 and hidden_dim % head_dim == 0
         self.hidden_dim = hidden_dim
-        self.w_in = nn.Linear(emb_dim, hidden_dim * 3, bias=use_bias)
-        self.bias = nn.Parameter(torch.rand(hidden_dim))
-        # self.mulbias = nn.Parameter(torch.zeros(hidden_dim))
-        # self.conv = nn.Parameter(torch.zeros(emb_dim))
+        self.nheads = nheads
+        self.headdim = head_dim
+        self.inner_dims = [hidden_dim//nheads, head_dim, nheads*head_dim, hidden_dim//nheads, hidden_dim]
+        self.w_in = nn.Linear(emb_dim, sum(self.inner_dims), bias=use_bias)
+        self.bias = nn.Parameter(torch.rand(hidden_dim//nheads, head_dim))
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -151,17 +247,17 @@ class SandboxUnit(nn.Module):
 
     def reset_parameters(self, gain=1.0):
         # Gain for init scale factor x is given by:
-        # (q / sqrt2) * v * wout
+        # (z / sqrt2) * v * k * q * wout
         # Plugging in:
-        # x sqrtd / sqrt2 * x sqrtd * x sqrtd sqrtg
+        # x sqrtd / sqrt2 * x sqrtd * x sqrtd * x sqrtd sqrte * x sqrtd sqrtg
         # Set to gain, solve for x
-        # x**3 (sqrt.5 * sqrtg * d**1.5) = target gain
-        # x = (gain * sqrt2 / d**1.5 / sqrtg)**(1/3)
-        for layer in [self.w_in.weight, self.w_out.weight]:  # , self.conv, self.mulbias]:
+        # x**5 (sqrt.5 * sqrtg * sqrte * d**2.5) = target gain
+        # x = (gain * sqrt2 / d**2.5 / sqrtge)**(1/5)
+        for layer in [self.w_in.weight, self.w_out.weight]:
             nn.init.normal_(
                 layer,
                 mean=0.0,
-                std = (gain * 2**.5 / self.hidden_grow_factor**.5 / self.width**1.5)**(1/3)
+                std = (gain * 2**.5 / (self.hidden_grow_factor*self.headdim)**.5 / self.width**2.5)**(1/5)
             )
         self.bias.data.random_()
         if self.use_bias:
@@ -174,30 +270,32 @@ class SandboxUnit(nn.Module):
         # TODO: add dropout somewhere
         residual = x
 
-        # Conv, RWKV-style
-        # c = self.conv
-        # c = c.add(self.layer_bias).sigmoid()
-        # x = x * c + (1 - c) * F.pad(x, (0,0,1,0))[:,:-1]
-
         # Layernorm
         x = self.ln(x)
 
         # Project
-        q, g, v = self.w_in(x).split(self.hidden_dim, dim=-1)
-        q = self.a(q)
-        # v = self.a(v)
+        v, k, q, g, z = self.w_in(x).split(self.inner_dims, dim=-1)
+        z = self.a(z)
 
         # Gate handling
         b = self.bias
         b = b.sub(b.min())
         b = b.mul(6 / b.max())
-        g = g.add(b).sigmoid()
+        g = g.unsqueeze(-1).add(b).sigmoid() # b n d/h e
+        s = g.size()
+        
+        # Expand state
+        kv = v.unsqueeze(-1) * k.unsqueeze(-2) # b n d/h e
         
         # Scan
-        z = self.scan(v, g)#.add(self.mulbias)
+        kv = self.scan(kv.view(*s[:2],-1), g.view(*s[:2],-1)) # b n d/h*e
+        qkv = torch.einsum("bnde,bnhe->bnhd", 
+                           kv.view(*s), 
+                           q.view(*s[:2], self.nheads, self.headdim)
+                           ).reshape(*s[:2], self.hidden_dim)
 
         # Out project / add
-        return residual + self.w_out(z * q)
+        return residual + self.w_out(z * qkv)
 
 
 class SandboxModel(nn.Module):
