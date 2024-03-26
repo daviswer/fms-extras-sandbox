@@ -68,11 +68,13 @@ class GatedScan(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         state, gate = inputs
-        ctx.save_for_backward(state, gate, output)
+        ctx.save_for_backward(state, gate) #, output)
 
     @staticmethod
     def backward(ctx, grad):
-        state, gate, output = ctx.saved_tensors
+        # state, gate, output = ctx.saved_tensors
+        state, gate = ctx.saved_tensors
+        output = scan(state.mul(1 - gate), gate)
 
         # Gate-accumulate grads
         gflip = gate.flip([1])
