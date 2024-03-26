@@ -10,9 +10,10 @@ from fms.utils.activation import str_to_activation
 
 
 def pscan(X, A):
-    # Courtesy of https://github.com/pytorch/pytorch/issues/95408#issuecomment-1871722410
+    # Based on https://github.com/pytorch/pytorch/issues/95408#issuecomment-1871722410
     # Unfortunately, it's slower, and might produce NaNs
-    Xa = F.pad(torch.transpose(X, 1, 2), (1,0))
+    # Xa = F.pad(torch.transpose(X, 1, 2), (1,0))
+    Xa = X.transpose(1,2)
     
     X_ = Xa.add(1e-12).log()
     A_ = A.add(1e-12).log()
@@ -23,10 +24,12 @@ def pscan(X, A):
 #     A_complex = (A < 0).to(A.dtype)
 #     A_ = torch.complex(A_real, A_complex * torch.pi)
 
-    a_star =  F.pad(torch.cumsum(A_, dim=1).transpose(1,2), (1,0))
+    # a_star =  F.pad(torch.cumsum(A_, dim=1).transpose(1,2), (1,0))
+    a_star = torch.cumsum(A_, dim=1).transpose(1,2)
     log_x0_plus_b_star = torch.logcumsumexp(X_ - a_star, dim=-1)
     log_x =  a_star + log_x0_plus_b_star
-    return torch.transpose(torch.exp(log_x)[:,:,1:], 1, 2)
+    return torch.transpose(log_x.exp()).transpose(1,2)
+    # return torch.transpose(torch.exp(log_x)[:,:,1:], 1, 2)
 
 
 def scan(state, g):
@@ -235,10 +238,10 @@ class SandboxUnit(nn.Module):
     ):
         super(SandboxUnit, self).__init__()
 
-        # v: d/h
+        # v: d
         # k: e
-        # q: h*e
-        # g: d/h
+        # q: e
+        # g: d
         # z: d
 
         self.multiple_of = multiple_of
@@ -250,9 +253,9 @@ class SandboxUnit(nn.Module):
         self.hidden_dim = hidden_dim
         self.nheads = nheads
         self.headdim = head_dim
-        self.inner_dims = [hidden_dim//nheads, head_dim, nheads*head_dim, hidden_dim//nheads, hidden_dim]
+        self.inner_dims = [hidden_dim, head_dim, head_dim, hidden_dim, hidden_dim]
         self.w_in = nn.Linear(emb_dim, sum(self.inner_dims), bias=use_bias)
-        self.bias = nn.Parameter(torch.rand(hidden_dim//nheads, head_dim))
+        self.bias = nn.Parameter(torch.rand(hidden_dim, head_dim))
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -301,18 +304,18 @@ class SandboxUnit(nn.Module):
         b = self.bias
         b = b.sub(b.min())
         b = b.mul(6 / b.max())
-        g = g.unsqueeze(-1).add(b).sigmoid() # b n d/h e
+        g = g.unsqueeze(-1).add(b).sigmoid() # b n d e
         s = g.size()
         
         # Expand state
-        kv = v.unsqueeze(-1) * k.unsqueeze(-2) # b n d/h e
+        kv = v.unsqueeze(-1) * k.unsqueeze(-2) # b n d e
         
         # Scan
-        kv = self.scan(kv.view(*s[:2],-1), g.view(*s[:2],-1)) # b n d/h*e
-        qkv = torch.einsum("bnde,bnhe->bnhd", 
+        kv = self.scan(kv.view(*s[:2],-1), g.view(*s[:2],-1)) # b n de
+        qkv = torch.einsum("bnde,bne->bnd", 
                            kv.view(*s), 
-                           q.view(*s[:2], self.nheads, self.headdim)
-                           ).reshape(*s[:2], self.hidden_dim)
+                           q.view(*s[:2], self.headdim)
+                           )
 
         # Out project / add
         if self.layer_id == 0:
@@ -394,7 +397,7 @@ class SandboxModel(nn.Module):
         self.dec_norm.reset_parameters()
         for layer_ind, layer in enumerate(self.layers):
             layer.reset_parameters(gain=1) #/len(self.layers)**.5)
-            layer.layer_id = layer_ind+2
+            layer.layer_id = layer_ind+2+len(self.layers)
 
     def _helper(
         self,
