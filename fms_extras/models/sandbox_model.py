@@ -257,7 +257,8 @@ class SandboxUnit(nn.Module):
         self.headdim = head_dim
         self.inner_dims = [hidden_dim, head_dim, head_dim, hidden_dim, hidden_dim]
         self.w_in = nn.Linear(emb_dim, sum(self.inner_dims), bias=use_bias)
-        self.bias = nn.Parameter(torch.rand(hidden_dim, head_dim))
+        self.bias = nn.Parameter(torch.rand(hidden_dim, 1))
+        self.bias2 = nn.Parameter(torch.rand(1, head_dim))
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -285,6 +286,7 @@ class SandboxUnit(nn.Module):
                 std = (gain * 2**.5 / (self.hidden_grow_factor*self.headdim)**.5 / self.width**2.5)**(1/5)
             )
         self.bias.data.random_()
+        self.bias2.data.random_()
         if self.use_bias:
             self.w_in.bias.data.zero_()
             self.w_out.bias.data.zero_()
@@ -305,8 +307,13 @@ class SandboxUnit(nn.Module):
         # Gate handling
         b = self.bias
         b = b.sub(b.min())
-        b = b.mul(6 / b.max())
-        g = g.unsqueeze(-1).add(b).sigmoid() # b n d e
+        b = b.mul(5 / b.max()) + 2
+        b2 = self.bias2
+        b2 = b2.sub(b2.min())
+        b2 = b2.mul(15 / b2.max()) + 1
+        g = F.logsigmoid(g.unsqueeze(-1).sub(b)) # b n d 1
+        g = g.mul(b2).exp() # b n d e
+        # g = g.unsqueeze(-1).add(b).sigmoid() # b n d e
         s = g.size()
         
         # Expand state
@@ -322,7 +329,7 @@ class SandboxUnit(nn.Module):
         # Out project / add
         if self.layer_id == 0:
             return residual + self.w_out(z * qkv)
-        return residual * (1 - 1/self.layer_id)**.5 + (1/self.layer_id)**.5 * self.w_out(z * qkv)
+        return residual * (1 - 1/self.layer_id)**.5 + (1/self.layer_id)**.5 * self.w_out(z * (qkv + v))
 
 
 class SandboxModel(nn.Module):
