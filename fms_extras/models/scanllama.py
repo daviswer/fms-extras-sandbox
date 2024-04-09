@@ -22,7 +22,6 @@ def scan(state, g):
         span = 2**(i+1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
         g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
-        print(i, logl, g.shape, state.shape)
         newstate = state[:,:,span//2-1].matmul(g[:,:,-1])
         newgate = g[:,:,span//2-1].matmul(g[:,:,-1])
         state[:,:,-1] += newstate
@@ -231,9 +230,11 @@ class ScanHeadAttention(nn.Module):
             )
         
         # q/k/v: b h l d
+        print(keys.shape, values.shape)
         qk = torch.einsum("blhd,blhde->blhe", queries, keys)  # b l h 32
         qk = qk.softmax(3)
         qkv = torch.einsum("blhe,blhde->blhd", qk, values)  # b l h d
+        print("EMU", qk.shape, qkv.shape)
 
         z = qkv.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         return self.dense(z)
