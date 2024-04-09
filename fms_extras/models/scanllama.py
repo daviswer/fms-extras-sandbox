@@ -217,7 +217,7 @@ class ScanHeadAttention(nn.Module):
         keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
         values = values.unsqueeze(3)  # b l d 1
-        values = F.pad(values, (0, self.kvheads-1))  # b l d 32
+        values = F.pad(values, (0, 32-1))  # b l d 32
         values = self.scan(values, gate).view(batch_size, kv_len, self.kvheads, self.emb_v_per_head, -1)  # b l h d 32
 
         # Expand kv so black-box attn will work
@@ -230,11 +230,9 @@ class ScanHeadAttention(nn.Module):
             )
         
         # q/k/v: b h l d
-        print(keys.shape, values.shape)
         qk = torch.einsum("blhd,blhde->blhe", queries, keys)  # b l h 32
         qk = qk.softmax(3)
         qkv = torch.einsum("blhe,blhde->blhd", qk, values)  # b l h d
-        print("EMU", qk.shape, qkv.shape)
 
         z = qkv.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         return self.dense(z)
