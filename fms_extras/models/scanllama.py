@@ -52,11 +52,11 @@ class MatScan(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         state, gate = inputs
-        ctx.save_for_backward(state, gate, output)
+        ctx.save_for_backward(gate, output)
 
     @staticmethod
     def backward(ctx, grad):
-        state, gate, output = ctx.saved_tensors
+        gate, output = ctx.saved_tensors
 
         # Gate-accumulate grads
         gflip = gate.flip([1]).transpose(2,3)
