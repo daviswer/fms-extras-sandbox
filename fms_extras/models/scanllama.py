@@ -13,7 +13,6 @@ from fms.utils.activation import str_to_activation
 def scan(state, g):
     # state: b n d h
     # g: b n h h
-    print(state.size(), g.size())
     state = state.clone()
     g = g.clone()
     s = state.size()
@@ -213,7 +212,7 @@ class ScanHeadAttention(nn.Module):
         gate = self.gates[None,None]  # 1 1 32 32
         gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
         keys = keys.unsqueeze(3)  # b l d 1
-        keys = F.pad(keys, (0, self.kvheads-1))  # b l d 32
+        keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
         values = values.unsqueeze(3)  # b l d 1
         values = F.pad(values, (0, self.kvheads-1))  # b l d 32
