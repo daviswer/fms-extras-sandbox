@@ -13,6 +13,7 @@ from fms.utils.activation import str_to_activation
 def scan(state, g):
     # state: b n d h
     # g: b n h h
+    print(state.size(), g.size())
     state = state.clone()
     g = g.clone()
     s = state.size()
@@ -204,7 +205,7 @@ class ScanHeadAttention(nn.Module):
         )
         keys = self.key(k)
         values = self.value(v)
-        queries = queries / (self.emb_kq_per_head**(1/4))  # b l h d
+        queries = queries / (self.emb_kq_per_head**(1/4))  # b l d h
         keys = keys / (self.emb_kq_per_head**(1/4))
         
         # Build scan cache
