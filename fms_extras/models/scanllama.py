@@ -155,9 +155,10 @@ class MultiHeadAttention(nn.Module):
             )
         
         # q/k/v: b h l d
-        qk = q.matmul(k.transpose(2,3)).softmax(3)  # b h l l
-        qk = qk.tril()
-        qk = qk / qk.sum(3, True).add(1e-9)
+        qk = q.matmul(k.transpose(2,3))  # b h l l
+        print(qk.size())
+        m = torch.ones(qk.size(2), qk.size(2), device=qk.device, dtype=qk.dtype).tril().log()
+        qk = qk.add(m).softmax(3)
         qkv = qk.matmul(v)  # b h l d
 
         z = qkv.transpose(1,2).reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
