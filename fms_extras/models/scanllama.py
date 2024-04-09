@@ -155,11 +155,10 @@ class MultiHeadAttention(nn.Module):
             )
         
         # q/k/v: b h l d
-        qk = q.matmul(k.transpose(2,3))  # b h l l
-        print(qk.size())
+        qk = queries.matmul(keys.transpose(2,3))  # b h l l
         m = torch.ones(qk.size(2), qk.size(2), device=qk.device, dtype=qk.dtype).tril().log()
         qk = qk.add(m).softmax(3)
-        qkv = qk.matmul(v)  # b h l d
+        qkv = qk.matmul(values)  # b h l d
 
         z = qkv.transpose(1,2).reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         return self.dense(z)
