@@ -10,6 +10,67 @@ from fms.modules.feedforward import GatedLinearUnit
 from fms.utils.activation import str_to_activation
 
 
+def scan(state, g):
+    # state: b n d h
+    # g: b n h h
+    state = state.clone()
+    g = g.clone()
+    s = state.size()
+    logl = s[1].bit_length() - 1
+    # Up sweep: create ruler ticks
+    for i in range(logl):
+        span = 2**(i+1)
+        state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
+        g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
+        state[:,:,-1] = state[:,:,-1] + state[:,:,span//2-1].matmul(g[:,:,-1])
+        g[:,:,-1] = g[:,:,span//2-1].matmul(g[:,:,-1])
+        
+    # Down sweep: fill in blanks
+    state = state.view(*s)
+    g = g.view(s[0], s[1], s[3], s[3])
+    state = nn.functional.pad(state, (0,0,0,0,1,0))
+    g = nn.functional.pad(g, (0,0,0,0,1,0))[:,:-1]
+    remainder = state[:,-1:]
+    state = state[:,:-1]
+    for i in range(logl-1):
+        span = 2**(logl-i-1)
+        state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
+        g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
+        state[:,:,span//2] = state[:,:,span//2] + state[:,:,0].matmul(g[:,:,span//2])
+        g[:,:,span//2] = g[:,:,0].matmul(g[:,:,span//2])
+    state = torch.cat([state.view(*s)[:,1:], remainder], dim=1)
+    return state
+
+
+class MatScan(torch.autograd.Function):
+    @staticmethod
+    def forward(state, gate):
+        return scan(state, gate)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        state, gate = inputs
+        ctx.save_for_backward(state, gate, output)
+
+    @staticmethod
+    def backward(ctx, grad):
+        state, gate, output = ctx.saved_tensors
+
+        # Gate-accumulate grads
+        gflip = gate.flip([1]).transpose(2,3)
+        gatesum = scan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])  # b n d h
+
+        # State grad
+        state_grad = gatesum #.mul(1 - gate)
+
+        # Gate grad
+        outshift = output.roll(1, dims=1)
+        outshift[:, :1] = 0  # b n d h
+        gate_grad = outshift.transpose(2,3).matmul(gatesum)  # b n h h
+
+        return state_grad, gate_grad
+
+
 class CenteredLayerNormParameterized(nn.Module):
     """
     As LayerNormParameterized from Foundation-Model-Stack, but adds affine weight values to a static offset of 1.
@@ -57,6 +118,122 @@ class CenteredLayerNormParameterized(nn.Module):
         if self.elementwise_shift:
             x = x + self.bias
         return x
+    
+
+class ScanHeadAttention(nn.Module):
+    """
+    Performs scan-cache self-attention.
+    ...
+    Args
+    ----
+    emb_dim : int
+        Latent dimensionality of input and output tensors.
+    emb_kq : int
+        Latent dimensionality of each head in key and query projections (attention dimension).
+    emb_v : int
+        Latent dimensionality of each head in value projection (mixing dimension).
+    nheads : int
+        Number of attention heads.
+    p_dropout : float|None
+        Dropout probability. Must be in range [0,1]. If 0 or None, dropout will not be used.
+    use_bias : bool
+        Include bias terms in fully-connected sublayers?
+    """
+
+    def __init__(
+        self,
+        emb_dim,
+        emb_kq,
+        emb_v,
+        nheads,
+        kvheads,
+        p_dropout=None,
+        use_bias=False,
+    ):
+        super(ScanHeadAttention, self).__init__()
+        self.nheads = nheads
+        self.kvheads = kvheads
+        self.emb_dim = emb_dim
+        self.emb_kq_per_head = emb_kq
+        self.emb_v_per_head = emb_v
+        self.p_dropout = p_dropout if p_dropout is not None else 0.0
+        self.use_bias = use_bias
+        self.query = nn.Linear(
+            self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
+        )
+        self.key = nn.Linear(
+            self.emb_dim, self.kvheads * self.emb_kq_per_head, bias=use_bias
+        )
+        self.value = nn.Linear(
+            self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
+        )
+        self.dense = nn.Linear(
+            self.nheads * self.emb_v_per_head, self.emb_dim, bias=use_bias
+        )
+        if self.p_dropout:
+            self.attn_dropout = nn.Dropout(self.p_dropout)
+        g = torch.tensor([1 - 2**(-i/32*5-1) for i in range(32)])
+        gates = torch.diag(g)
+        for i in range(1, g.size(0)):
+            gates[i,i-1] = (1-g[i])
+        self.register_buffer("gates", gates)
+        self.scan = MatScan.apply
+
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if self.use_bias:
+                    m.bias.data.zero_()
+
+    def forward(
+        self,
+        q,
+        k,
+        v,
+    ):
+        # q, k, v: batch_size x seq_len x emb_dim
+        # mask: batch_size x seq_len x seq_len
+        batch_size, q_len, _ = q.size()
+        kv_len = k.size(1)
+
+        # split emb_dim as nheads*emb_dim_per_head
+        # b x h x qlen x ds
+        queries = self.query(q).view(
+            batch_size, q_len, self.nheads, self.emb_kq_per_head
+        )
+        keys = self.key(k)
+        values = self.value(v)
+        queries = queries / (self.emb_kq_per_head**(1/4))  # b l h d
+        keys = keys / (self.emb_kq_per_head**(1/4))
+        
+        # Build scan cache
+        # k/v: b l d
+        gate = self.gate[None,None]  # 1 1 32 32
+        gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
+        keys = keys.unsqueeze(3)  # b l d 1
+        keys = F.pad(keys, (0, self.kvheads-1))  # b l d 32
+        keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
+        values = values.unsqueeze(3)  # b l d 1
+        values = F.pad(values, (0, self.kvheads-1))  # b l d 32
+        values = self.scan(values, gate).view(batch_size, kv_len, self.kvheads, self.emb_v_per_head, -1)  # b l h d 32
+
+        # Expand kv so black-box attn will work
+        expansion = self.nheads // self.kvheads
+        # k/v: b l h d 32
+        if expansion != 1:
+            keys = keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
+            values = (
+                values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
+            )
+        
+        # q/k/v: b h l d
+        qk = torch.einsum("blhd,blhde->blhe", queries, keys)  # b l h 32
+        qk = qk.softmax(3)
+        qkv = torch.einsum("blhe,blhde->blhd", qk, values)  # b l h d
+
+        z = qkv.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        return self.dense(z)
     
 
 class MultiHeadAttention(nn.Module):
@@ -156,7 +333,7 @@ class MultiHeadAttention(nn.Module):
         
         # q/k/v: b h l d
         qk = queries.matmul(keys.transpose(2,3))  # b h l l
-        m = torch.ones(qk.size(2), qk.size(2), device=qk.device, dtype=qk.dtype).tril().log()
+        m = torch.ones(qk.size(2), qk.size(3), device=qk.device, dtype=qk.dtype).tril().log()
         qk = qk.add(m).softmax(3)
         qkv = qk.matmul(values)  # b h l d
 
@@ -198,7 +375,7 @@ class SandboxUnit(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
-        self.attn = MultiHeadAttention(
+        self.attn = ScanHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
