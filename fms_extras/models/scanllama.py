@@ -13,6 +13,7 @@ from fms.utils.activation import str_to_activation
 def scan(state, g):
     # state: b n d h
     # g: b n h h
+    print(state.size(), g.size())
     state = state.clone()
     g = g.clone()
     s = state.size()
