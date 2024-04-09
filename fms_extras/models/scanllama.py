@@ -23,8 +23,11 @@ def scan(state, g):
         span = 2**(i+1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
         g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
-        state[:,:,-1] = state[:,:,-1] + state[:,:,span//2-1].matmul(g[:,:,-1])
-        g[:,:,-1] = g[:,:,span//2-1].matmul(g[:,:,-1])
+        newstate = state[:,:,span//2-1].matmul(g[:,:,-1])
+        newgate = g[:,:,span//2-1].matmul(g[:,:,-1])
+        print("   ", newstate.shape, newgate.shape)
+        state[:,:,-1] += newstate
+        g[:,:,-1] = newgate
         
     # Down sweep: fill in blanks
     state = state.view(*s)
