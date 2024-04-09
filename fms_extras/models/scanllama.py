@@ -13,7 +13,6 @@ from fms.utils.activation import str_to_activation
 def scan(state, g):
     # state: b n d h
     # g: b n h h
-    print(state.size(), g.size())
     state = state.clone()
     g = g.clone()
     s = state.size()
@@ -23,9 +22,9 @@ def scan(state, g):
         span = 2**(i+1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
         g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
+        print(i, logl, g.shape, state.shape)
         newstate = state[:,:,span//2-1].matmul(g[:,:,-1])
         newgate = g[:,:,span//2-1].matmul(g[:,:,-1])
-        print("   ", newstate.shape, newgate.shape)
         state[:,:,-1] += newstate
         g[:,:,-1] = newgate
         
