@@ -56,7 +56,7 @@ class MatScan(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad):
-        gate = ctx.saved_tensors
+        gate = ctx.saved_tensors[0]
 
         # Gate-accumulate grads
         gflip = gate.flip([1]).transpose(2,3)
