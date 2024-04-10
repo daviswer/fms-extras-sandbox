@@ -406,7 +406,7 @@ class SandboxUnit(nn.Module):
             emb_kq,
             emb_v,
             self.config.nheads,
-            kvheads//2,
+            kvheads//4,
             p_dropout=self.config.p_dropout,
             use_bias=False,
         )
