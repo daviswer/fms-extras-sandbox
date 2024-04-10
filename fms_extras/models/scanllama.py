@@ -180,6 +180,8 @@ class ScanHeadAttention(nn.Module):
             gates[i,i-1] = (1-g[i])
         self.register_buffer("gates", gates)
         self.scan = MatScan.apply
+        self.ln_k = CenteredLayerNormParameterized(emb_kq, use_high_precision_pow=True)
+        self.ln_v = CenteredLayerNormParameterized(emb_v, use_high_precision_pow=True)
 
     def reset_parameters(self):
         for m in self.modules():
@@ -206,7 +208,7 @@ class ScanHeadAttention(nn.Module):
         )
         keys = self.key(k)
         values = self.value(v)
-        queries = queries / (self.emb_kq_per_head**(1/4))  # b l d h
+        queries = queries / (self.emb_kq_per_head**(1/4))  # b l h d
         keys = keys / (self.emb_kq_per_head**(1/4))
         
         # Build scan cache
@@ -216,23 +218,24 @@ class ScanHeadAttention(nn.Module):
         keys = keys.unsqueeze(3)  # b l d 1
         keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
+        keys = self.ln_k(keys.transpose(3,4))  # b l h 32 d
         values = values.unsqueeze(3)  # b l d 1
         values = F.pad(values, (0, 32-1))  # b l d 32
         values = self.scan(values, gate).view(batch_size, kv_len, self.kvheads, self.emb_v_per_head, -1)  # b l h d 32
+        values = self.ln_v(values.transpose(3,4))  # b l h 32 d
 
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
-        # k/v: b l h d 32
+        # k/v: b l h 32 d
         if expansion != 1:
             keys = keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
             values = (
                 values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
             )
         
-        # q/k/v: b h l d
-        qk = torch.einsum("blhd,blhde->blhe", queries, keys)  # b l h 32
+        qk = torch.einsum("blhd,blhed->blhe", queries, keys)  # b l h 32
         qk = qk.softmax(3)
-        qkv = torch.einsum("blhe,blhde->blhd", qk, values)  # b l h d
+        qkv = torch.einsum("blhe,blhed->blhd", qk, values)  # b l h d
 
         z = qkv.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         return self.dense(z)
