@@ -239,11 +239,11 @@ class ScanHeadAttention(nn.Module):
         keys = keys.unsqueeze(3)  # b l d 1
         keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
-        keys = self.ln_k(keys.transpose(3,4))  # b l h 32 d
+        # keys = self.ln_k(keys.transpose(3,4))  # b l h 32 d
         values = values.unsqueeze(3)  # b l d 1
         values = F.pad(values, (0, 32-1))  # b l d 32
         values = self.scan(values, gate).view(batch_size, kv_len, self.kvheads, self.emb_v_per_head, -1)  # b l h d 32
-        values = self.ln_v(values.transpose(3,4))  # b l h 32 d
+        # values = self.ln_v(values.transpose(3,4))  # b l h 32 d
 
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
@@ -254,9 +254,9 @@ class ScanHeadAttention(nn.Module):
                 values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
             )
         
-        qk = torch.einsum("blhd,blhed->blhe", queries, keys)  # b l h 32
+        qk = torch.einsum("blhd,blhde->blhe", queries, keys)  # b l h 32
         qk = qk.softmax(3)
-        qkv = torch.einsum("blhe,blhed->blhd", qk, values)  # b l h d
+        qkv = torch.einsum("blhe,blhde->blhd", qk, values)  # b l h d
 
         z = qkv.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         return self.dense(z)
@@ -406,7 +406,7 @@ class SandboxUnit(nn.Module):
             emb_kq,
             emb_v,
             self.config.nheads,
-            kvheads//4,
+            kvheads,
             p_dropout=self.config.p_dropout,
             use_bias=False,
         )
