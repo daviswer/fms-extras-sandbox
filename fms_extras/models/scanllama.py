@@ -52,25 +52,46 @@ class MatScan(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         state, gate = inputs
-        ctx.save_for_backward(gate, output)
+        ctx.save_for_backward(gate)
 
     @staticmethod
     def backward(ctx, grad):
-        gate, output = ctx.saved_tensors
+        gate = ctx.saved_tensors
 
         # Gate-accumulate grads
         gflip = gate.flip([1]).transpose(2,3)
         gatesum = scan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])  # b n d h
 
-        # State grad
-        state_grad = gatesum #.mul(1 - gate)
+        return gatesum, None
 
-        # Gate grad
-        outshift = output.roll(1, dims=1)
-        outshift[:, :1] = 0  # b n d h
-        gate_grad = outshift.transpose(2,3).matmul(gatesum)  # b n h h
 
-        return state_grad, gate_grad
+# class MatScan(torch.autograd.Function):
+#     @staticmethod
+#     def forward(state, gate):
+#         return scan(state, gate)
+
+#     @staticmethod
+#     def setup_context(ctx, inputs, output):
+#         state, gate = inputs
+#         ctx.save_for_backward(gate, output)
+
+#     @staticmethod
+#     def backward(ctx, grad):
+#         gate, output = ctx.saved_tensors
+
+#         # Gate-accumulate grads
+#         gflip = gate.flip([1]).transpose(2,3)
+#         gatesum = scan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])  # b n d h
+
+#         # State grad
+#         state_grad = gatesum #.mul(1 - gate)
+
+#         # Gate grad
+#         outshift = output.roll(1, dims=1)
+#         outshift[:, :1] = 0  # b n d h
+#         gate_grad = outshift.transpose(2,3).matmul(gatesum)  # b n h h
+
+#         return state_grad, gate_grad
 
 
 class CenteredLayerNormParameterized(nn.Module):
@@ -177,7 +198,7 @@ class ScanHeadAttention(nn.Module):
         g = torch.tensor([1 - 2**(-i/32*5-1) for i in range(32)])
         gates = torch.diag(g)
         for i in range(1, g.size(0)):
-            gates[i,i-1] = (1-g[i])
+            gates[i-1,i] = (1-g[i])
         self.register_buffer("gates", gates)
         self.scan = MatScan.apply
         self.ln_k = CenteredLayerNormParameterized(emb_kq, use_high_precision_pow=True)
