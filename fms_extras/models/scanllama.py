@@ -359,7 +359,9 @@ class MultiHeadAttention(nn.Module):
         
         # q/k/v: b h l d
         qk = queries.matmul(keys.transpose(2,3))  # b h l l
-        m = torch.ones(qk.size(2), qk.size(3), device=qk.device, dtype=qk.dtype).tril().log()
+        m = torch.ones(qk.size(2), qk.size(3), device=qk.device, dtype=qk.dtype).tril()
+        m = m - torch.ones_like(m).tril(diagonal=-32)
+        m = m.log()
         qk = qk.add(m).softmax(3)
         qkv = qk.matmul(values)  # b h l d
 
@@ -401,7 +403,7 @@ class SandboxUnit(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
-        self.attn = ScanHeadAttention(
+        self.attn = MultiHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
