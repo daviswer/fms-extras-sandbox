@@ -12,16 +12,17 @@ from fms.utils.activation import str_to_activation
 
 def scan(state, g):
     # state: b n d h
-    # g: b n h h
+    # g: 1/b n h h
     state = state.clone()
     g = g.clone()
     s = state.size()
+    g0 = g.size(0)
     logl = s[1].bit_length() - 1
     # Up sweep: create ruler ticks
     for i in range(logl):
         span = 2**(i+1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
-        g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
+        g = g.view(g0, -1, span, s[3], s[3])  # 1 -1 span h h
         newstate = state[:,:,span//2-1].matmul(g[:,:,-1])
         newgate = g[:,:,span//2-1].matmul(g[:,:,-1])
         state[:,:,-1] += newstate
@@ -29,7 +30,7 @@ def scan(state, g):
         
     # Down sweep: fill in blanks
     state = state.view(*s)
-    g = g.view(s[0], s[1], s[3], s[3])
+    g = g.view(g0, s[1], s[3], s[3])
     state = nn.functional.pad(state, (0,0,0,0,1,0))
     g = nn.functional.pad(g, (0,0,0,0,1,0))[:,:-1]
     remainder = state[:,-1:]
@@ -37,7 +38,7 @@ def scan(state, g):
     for i in range(logl-1):
         span = 2**(logl-i-1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
-        g = g.view(s[0], -1, span, s[3], s[3])  # b -1 span h h
+        g = g.view(g0, -1, span, s[3], s[3])  # b -1 span h h
         state[:,:,span//2] = state[:,:,span//2] + state[:,:,0].matmul(g[:,:,span//2])
         g[:,:,span//2] = g[:,:,0].matmul(g[:,:,span//2])
     state = torch.cat([state.view(*s)[:,1:], remainder], dim=1)
@@ -195,10 +196,11 @@ class ScanHeadAttention(nn.Module):
         )
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
-        g = torch.tensor([1 - 2**(-i/32*5-1) for i in range(32)])
-        gates = torch.diag(g)
-        for i in range(1, g.size(0)):
-            gates[i-1,i] = (1-g[i])
+        gates = self.make_gates()
+        # g = torch.tensor([1 - 2**(-i/32*5-1) for i in range(32)])
+        # gates = torch.diag(g)
+        # for i in range(1, g.size(0)):
+        #     gates[i-1,i] = (1-g[i])
         self.register_buffer("gates", gates)
         self.scan = MatScan.apply
         self.ln_k = CenteredLayerNormParameterized(emb_kq, use_high_precision_pow=True)
@@ -210,6 +212,24 @@ class ScanHeadAttention(nn.Module):
                 nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
                 if self.use_bias:
                     m.bias.data.zero_()
+
+    def make_gates(self):
+        n = 1024  # Roughly, total cache window length (actually somewhat smaller)
+        f = 4  # Repetitions of each power of 2 per entry
+        interval = sum([torch.arange(n).remainder(2**x).sub(2**x-1).sign().add(1) 
+                        for x in range(n.bit_length())])
+        d = (n.bit_length()-3)*f
+        m = torch.zeros(n,d,d)
+        for i in range(n):
+            key = interval[i]*f
+            for j in range(key+1, d):
+                m[i,j,j] = 1
+            if key < d:
+                m[i,key,key] = .5**.5
+                m[i,key,key-1] = .5**.5
+            for j in range(1,min(key,d)):
+                m[i,j,j-1] = 1
+        return m.transpose(1,2)  # 1k 32 32
 
     def forward(
         self,
@@ -234,8 +254,9 @@ class ScanHeadAttention(nn.Module):
         
         # Build scan cache
         # k/v: b l d
-        gate = self.gates[None,None]  # 1 1 32 32
-        gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
+        gate = self.gate.repeat(4,1,1)[None]  # 1 4096 32 32
+        # gate = self.gates[None,None]  # 1 1 32 32
+        # gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
         keys = keys.unsqueeze(3)  # b l d 1
         keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
