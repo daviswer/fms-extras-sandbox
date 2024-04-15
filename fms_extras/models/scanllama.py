@@ -254,7 +254,7 @@ class ScanHeadAttention(nn.Module):
         
         # Build scan cache
         # k/v: b l d
-        gate = self.gate.repeat(4,1,1)[None]  # 1 4096 32 32
+        gate = self.gates.repeat(4,1,1)[None]  # 1 4096 32 32
         # gate = self.gates[None,None]  # 1 1 32 32
         # gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
         keys = keys.unsqueeze(3)  # b l d 1
