@@ -225,8 +225,8 @@ class ScanHeadAttention(nn.Module):
             for j in range(key+1, d):
                 m[i,j,j] = 1
             if key < d:
-                m[i,key,key] = .5**.5
-                m[i,key,key-1] = .5**.5
+                m[i,key,key] = .5 #**.5
+                m[i,key,key-1] = .5 #**.5
             for j in range(1,min(key,d)):
                 m[i,j,j-1] = 1
         return m.transpose(1,2)  # 1k 32 32
