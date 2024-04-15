@@ -212,6 +212,8 @@ class ScanHeadAttention(nn.Module):
                 nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
                 if self.use_bias:
                     m.bias.data.zero_()
+        self.ln_k.reset_parameters()
+        self.ln_v.reset_parameters()
 
     def make_gates(self):
         n = 1024  # Roughly, total cache window length (actually somewhat smaller)
@@ -225,8 +227,8 @@ class ScanHeadAttention(nn.Module):
             for j in range(key+1, d):
                 m[i,j,j] = 1
             if key < d:
-                m[i,key,key] = .5 #**.5
-                m[i,key,key-1] = .5 #**.5
+                m[i,key,key] = .5**.5
+                m[i,key,key-1] = .5**.5
             for j in range(1,min(key,d)):
                 m[i,j,j-1] = 1
         return m.transpose(1,2)  # 1k 32 32
@@ -580,7 +582,6 @@ class SandboxModel(nn.Module):
                 # is_causal_mask=is_causal_mask,
                 # attn_algorithm=attn_algorithm,
             )
-            print(i, output.std())
 
             # if use_cache:
             #     x_in, present_key_value_state = output
