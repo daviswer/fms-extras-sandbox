@@ -580,6 +580,7 @@ class SandboxModel(nn.Module):
                 # is_causal_mask=is_causal_mask,
                 # attn_algorithm=attn_algorithm,
             )
+            print(i, output.std())
 
             # if use_cache:
             #     x_in, present_key_value_state = output
